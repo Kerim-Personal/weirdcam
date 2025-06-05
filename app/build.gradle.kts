@@ -66,4 +66,10 @@ dependencies {
     // Compose + Camera uyumu için gerekli olabilir
     implementation("androidx.camera:camera-extensions:1.3.2")
 
+
+    // Material Icons için bunları açıkça eklemeyi deneyin
+    implementation("androidx.compose.material:material-icons-core:1.6.7") // En son kararlı sürümü kontrol edin
+    implementation("androidx.compose.material:material-icons-extended:1.6.7") // En son kararlı sürümü kontrol edin
+
+
 }
