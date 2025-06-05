@@ -71,5 +71,4 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core:1.6.7") // En son kararlı sürümü kontrol edin
     implementation("androidx.compose.material:material-icons-extended:1.6.7") // En son kararlı sürümü kontrol edin
 
-
 }

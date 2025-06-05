@@ -84,15 +84,7 @@ class MainActivity : ComponentActivity() {
 
             AppContent(
                 hasCameraPermission = hasCameraPermission,
-                hasAudioPermission = hasAudioPermission,
-                onRequestPermissions = { // Yeniden izin istemek için bir lambda
-                    val permissionsToRequestAgain = mutableListOf<String>()
-                    if (!hasCameraPermission) permissionsToRequestAgain.add(Manifest.permission.CAMERA)
-                    if (!hasAudioPermission) permissionsToRequestAgain.add(Manifest.permission.RECORD_AUDIO)
-                    if (permissionsToRequestAgain.isNotEmpty()) {
-                        requestMultiplePermissionsLauncher.launch(permissionsToRequestAgain.toTypedArray())
-                    }
-                }
+                hasAudioPermission = hasAudioPermission
             )
         }
     }
@@ -122,7 +114,7 @@ class MainActivity : ComponentActivity() {
 fun AppContent(
     hasCameraPermission: Boolean,
     hasAudioPermission: Boolean,
-    onRequestPermissions: () -> Unit, // İzinleri yeniden istemek için callback
+    // İzinleri yeniden istemek için callback
     modifier: Modifier = Modifier
 ) {
     WeirdcamTheme {
@@ -137,15 +129,14 @@ fun AppContent(
                 )
             } else {
                 // İzin verilmediyse veya bekleniyorsa kullanıcıya bir mesaj göster
-                var message = ""
-                if (!hasCameraPermission && !hasAudioPermission) {
-                    message = "Kamera ve ses kaydı izinleri verilmedi. Uygulamanın tam olarak çalışması için bu izinler gereklidir."
+                val message: String = if (!hasCameraPermission && !hasAudioPermission) {
+                    "Kamera ve ses kaydı izinleri verilmedi. Uygulamanın tam olarak çalışması için bu izinler gereklidir."
                 } else if (!hasCameraPermission) {
-                    message = "Kamera izni verilmedi. Uygulamanın çalışması için kamera izni gereklidir."
+                    "Kamera izni verilmedi. Uygulamanın çalışması için kamera izni gereklidir."
                 } else if (!hasAudioPermission) {
-                    message = "Ses kaydı izni verilmedi. Video kaydı için bu izin gereklidir."
+                    "Ses kaydı izni verilmedi. Video kaydı için bu izin gereklidir."
                 } else {
-                    message = "İzinler bekleniyor veya bir sorun oluştu..." // Bu durum nadir olmalı
+                    "İzinler bekleniyor veya bir sorun oluştu..." // Bu durum nadir olmalı
                 }
 
                 // Kullanıcıya eksik izinleri tekrar istemesi için bir seçenek sunabiliriz (opsiyonel)
