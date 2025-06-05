@@ -40,8 +40,8 @@ android {
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core) // Titreşim için
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -49,6 +49,11 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -56,19 +61,7 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-    // CameraX
-    implementation("androidx.camera:camera-core:1.3.2")
-    implementation("androidx.camera:camera-camera2:1.3.2")
-    implementation("androidx.camera:camera-lifecycle:1.3.2")
-    implementation("androidx.camera:camera-view:1.3.2") // Compose ile çalışır
-
-
-    // Compose + Camera uyumu için gerekli olabilir
-    implementation("androidx.camera:camera-extensions:1.3.2")
-
-
-    // Material Icons için bunları açıkça eklemeyi deneyin
-    implementation("androidx.compose.material:material-icons-core:1.6.7") // En son kararlı sürümü kontrol edin
-    implementation("androidx.compose.material:material-icons-extended:1.6.7") // En son kararlı sürümü kontrol edin
-
+    implementation("androidx.camera:camera-video:1.3.2")
+    implementation("androidx.compose.material:material-icons-core:1.6.7") // veya güncel sürüm
+    implementation("androidx.compose.material:material-icons-extended:1.6.7") // veya güncel sürüm
 }
