@@ -41,6 +41,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -57,9 +58,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -68,6 +72,7 @@ import androidx.core.graphics.scale
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.rememberAsyncImagePainter
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -138,15 +143,16 @@ fun CameraWithControls(
     var lastSetUseCaseHashForSurfaceProvider by remember { mutableIntStateOf(0) }
     var lastTakenPhotoUri by remember { mutableStateOf<Uri?>(null) }
 
+    var focusRingState by remember { mutableStateOf<Pair<Offset, Long>?>(null) }
+
+
     @Suppress("DEPRECATION")
     val previewUseCase = remember(selectedUiAspectRatio) {
-        Log.d("WeirdCam", "Recreating PreviewUseCase for AR: ${selectedUiAspectRatio.displayName}")
         Preview.Builder().setTargetAspectRatio(selectedUiAspectRatio.toCameraXAspectRatio()).build()
     }
 
     @Suppress("DEPRECATION")
     val imageCaptureUseCase = remember(selectedUiAspectRatio, imageCaptureFlashMode) {
-        Log.d("WeirdCam", "Recreating ImageCaptureUseCase for AR: ${selectedUiAspectRatio.displayName}, Flash: ${imageCaptureFlashMode.name}")
         ImageCapture.Builder()
             .setTargetAspectRatio(selectedUiAspectRatio.toCameraXAspectRatio())
             .setFlashMode(imageCaptureFlashMode.mode)
@@ -163,7 +169,6 @@ fun CameraWithControls(
     val cameraExecutor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
 
     LaunchedEffect(cameraProviderFuture, currentCameraSelector, lifecycleOwner, previewUseCase, imageCaptureUseCase, videoCaptureUseCase) {
-        Log.d("WeirdCam", "Attempting to bind camera. PreviewUseCase Hash: ${previewUseCase.hashCode()}, ImageCaptureUseCase Hash: ${imageCaptureUseCase.hashCode()}")
         val cameraProvider = cameraProviderFuture.get()
         try {
             cameraProvider.unbindAll()
@@ -177,13 +182,10 @@ fun CameraWithControls(
                 minZoomHardware = zoomState.minZoomRatio
                 maxZoomHardware = zoomState.maxZoomRatio
                 sliderActualMinRange = minZoomHardware
-                Log.d("WeirdCam", "Camera bound. HWZoom:[$minZoomHardware-$maxZoomHardware], SliderMin:$sliderActualMinRange")
                 targetUiZoomLevel = targetUiZoomLevel.coerceIn(sliderActualMinRange, maxZoomUi)
             }
         } catch (e: Exception) {
             Log.e("WeirdCam", "Camera binding failed: ${e.localizedMessage}", e)
-            cameraControl = null
-            cameraInfo = null
         }
     }
 
@@ -193,7 +195,6 @@ fun CameraWithControls(
 
     LaunchedEffect(actualHardwareZoomToApply) {
         cameraControl?.setZoomRatio(actualHardwareZoomToApply)
-            ?.addListener({ Log.d("WeirdCam", "Zoom applied: $actualHardwareZoomToApply") }, cameraExecutor)
     }
 
     val previewSoftwareZoomFactor by remember(animatedUiZoomLevel, maxZoomHardware) {
@@ -211,9 +212,7 @@ fun CameraWithControls(
             context,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
-                    targetUiZoomLevel =
-                        (targetUiZoomLevel * detector.scaleFactor).coerceIn(minZoomHardware, maxZoomUi)
-                    Log.d("WeirdCam", "Pinch Zoom: $targetUiZoomLevel")
+                    targetUiZoomLevel = (targetUiZoomLevel * detector.scaleFactor).coerceIn(minZoomHardware, maxZoomUi)
                     return true
                 }
             })
@@ -226,9 +225,10 @@ fun CameraWithControls(
             }
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                focusRingState = Pair(Offset(e.x, e.y), System.currentTimeMillis())
+
                 currentPreviewView?.let { view ->
-                    val factory =
-                        SurfaceOrientedMeteringPointFactory(view.width.toFloat(), view.height.toFloat())
+                    val factory = SurfaceOrientedMeteringPointFactory(view.width.toFloat(), view.height.toFloat())
                     val action = FocusMeteringAction.Builder(
                         factory.createPoint(e.x, e.y),
                         FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
@@ -236,10 +236,6 @@ fun CameraWithControls(
                         .setAutoCancelDuration(3, TimeUnit.SECONDS)
                         .build()
                     cameraControl?.startFocusAndMetering(action)
-                        ?.addListener(
-                            { Log.d("WeirdCam", "Focus and metering triggered at (${e.x}, ${e.y})") },
-                            cameraExecutor
-                        )
                 }
                 return true
             }
@@ -248,20 +244,25 @@ fun CameraWithControls(
 
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
+            modifier = Modifier.fillMaxSize().graphicsLayer {
+                scaleX = previewSoftwareZoomFactor
+                scaleY = previewSoftwareZoomFactor
+                rotationZ = if (invertVerticalEnabled) 180f else 0f
+                val isFrontCamera = userRequestedLensFacing == CameraSelector.LENS_FACING_FRONT
+                scaleX *= if (mirrorEffectEnabled) {
+                    if (isFrontCamera) 1f else -1f
+                } else {
+                    if (isFrontCamera) -1f else 1f
+                }
+            },
             factory = { ctx ->
-                Log.d("WeirdCam", "AndroidView Factory executing")
                 PreviewView(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
                     scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     currentPreviewView = this
                     previewUseCase.setSurfaceProvider(surfaceProvider)
-                    Log.d(
-                        "WeirdCam",
-                        "AndroidView.factory: Initial surface provider set for ${previewUseCase.hashCode()}."
-                    )
                     lastSetUseCaseHashForSurfaceProvider = previewUseCase.hashCode()
-
                     setOnTouchListener { _, event ->
                         var consumed = scaleGestureDetector.onTouchEvent(event)
                         if (event.pointerCount == 1 && !consumed) {
@@ -273,248 +274,209 @@ fun CameraWithControls(
             },
             update = { view ->
                 if (lastSetUseCaseHashForSurfaceProvider != previewUseCase.hashCode()) {
-                    Log.d(
-                        "WeirdCam",
-                        "AndroidView.update: previewUseCase instance changed (from $lastSetUseCaseHashForSurfaceProvider to ${previewUseCase.hashCode()}). Setting surface provider."
-                    )
                     previewUseCase.setSurfaceProvider(view.surfaceProvider)
                     lastSetUseCaseHashForSurfaceProvider = previewUseCase.hashCode()
                 }
-                currentPreviewView = view
-
-                val targetRotation = if (invertVerticalEnabled) 180f else 0f
-                val isFrontCamera = userRequestedLensFacing == CameraSelector.LENS_FACING_FRONT
-                val targetScaleX = if (mirrorEffectEnabled) {
-                    if (isFrontCamera) 1f else -1f
-                } else {
-                    if (isFrontCamera) -1f else 1f
-                }
-                val finalTargetScaleX = targetScaleX * previewSoftwareZoomFactor
-
-                Log.i(
-                    "WeirdCam_PREVIEW",
-                    "Applying preview transform. Rotation: $targetRotation, ScaleX: $finalTargetScaleX, ScaleY: $previewSoftwareZoomFactor, Mirror: $mirrorEffectEnabled, Invert: $invertVerticalEnabled, IsFrontCamera: $isFrontCamera"
-                )
-
-                view.rotation = targetRotation
-                view.scaleX = finalTargetScaleX
-                view.scaleY = previewSoftwareZoomFactor
-            },
-            modifier = Modifier.fillMaxSize()
+            }
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.background(
-                    Color.Black.copy(alpha = 0.4f),
-                    CircleShape
-                )
-            ) {
-                IconButton(onClick = {
-                    imageCaptureFlashMode = imageCaptureFlashMode.next()
-                    Log.d("WeirdCam", "Flash mode Toggled: ${imageCaptureFlashMode.name}")
-                }) { imageCaptureFlashMode.icon() }
+        Box(modifier = Modifier.fillMaxSize()) {
+            focusRingState?.let { (position, key) ->
+                FocusRing(position = position, key = key)
             }
-            Row(
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                listOf(
-                    UiAspectRatio.Ratio16x9,
-                    UiAspectRatio.Ratio4x3,
-                    UiAspectRatio.Ratio1x1
-                ).forEach { ar ->
-                    Text(
-                        ar.displayName,
-                        fontSize = 12.sp,
-                        color = if (selectedUiAspectRatio == ar) MaterialTheme.colorScheme.primary else Color.White,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                selectedUiAspectRatio = ar
-                                Log.d("WeirdCam", "Aspect Ratio Toggled: ${ar.displayName}")
-                            }
-                            .padding(vertical = 6.dp, horizontal = 8.dp)
-                    )
-                }
-            }
-        }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                "Zoom: %.1fx".format(animatedUiZoomLevel),
-                color = Color.White,
-                fontSize = 12.sp,
-                modifier = Modifier
-                    .background(
-                        Color.Black.copy(alpha = 0.3f),
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            )
-            Slider(
-                value = targetUiZoomLevel,
-                onValueChange = {
-                    targetUiZoomLevel = it.coerceIn(sliderActualMinRange, maxZoomUi)
-                },
-                valueRange = sliderActualMinRange..maxZoomUi,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 0.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.CenterStart
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
                 ) {
-                    lastTakenPhotoUri?.let { uri ->
-                        Image(
-                            painter = rememberAsyncImagePainter(uri),
-                            contentDescription = "Son Çekilen",
+                    IconButton(onClick = {
+                        imageCaptureFlashMode = imageCaptureFlashMode.next()
+                    }) { imageCaptureFlashMode.icon() }
+                }
+                Row(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        UiAspectRatio.Ratio16x9,
+                        UiAspectRatio.Ratio4x3,
+                        UiAspectRatio.Ratio1x1
+                    ).forEach { ar ->
+                        Text(
+                            ar.displayName,
+                            fontSize = 12.sp,
+                            color = if (selectedUiAspectRatio == ar) MaterialTheme.colorScheme.primary else Color.White,
                             modifier = Modifier
-                                .size(52.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.DarkGray)
-                                .clickable {
-                                    try {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                                            setDataAndType(
-                                                uri,
-                                                "image/*"
-                                            ); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        })
-                                    } catch (e: ActivityNotFoundException) {
-                                        Log.e("WeirdCam", "Galeri bulunamadı.", e)
-                                    }
-                                },
-                            contentScale = ContentScale.Crop
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { selectedUiAspectRatio = ar }
+                                .padding(vertical = 6.dp, horizontal = 8.dp)
                         )
-                    } ?: Box(Modifier.size(52.dp))
-                }
-                IconButton(onClick = {
-                    userRequestedLensFacing =
-                        if (userRequestedLensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
-                    Log.d("WeirdCam", "Camera Switch Toggled")
-                }) {
-                    Icon(
-                        Icons.Filled.Cameraswitch,
-                        "Kamera Değiştir",
-                        tint = Color.White
-                    )
-                }
-                IconButton(onClick = {
-                    mirrorEffectEnabled = !mirrorEffectEnabled
-                    Log.i(
-                        "WeirdCam_PREVIEW",
-                        "MirrorEffect Button Clicked. New state: $mirrorEffectEnabled"
-                    )
-                }) {
-                    Icon(
-                        Icons.Filled.Flip,
-                        "Ayna Efekti",
-                        tint = if (mirrorEffectEnabled) MaterialTheme.colorScheme.primary else Color.White
-                    )
-                }
-                IconButton(onClick = {
-                    invertVerticalEnabled = !invertVerticalEnabled
-                    Log.i(
-                        "WeirdCam_PREVIEW",
-                        "InvertVertical Button Clicked. New state: $invertVerticalEnabled"
-                    )
-                }) {
-                    Icon(
-                        Icons.Filled.Rotate90DegreesCcw,
-                        "Dikey Ters Çevir",
-                        tint = if (invertVerticalEnabled) MaterialTheme.colorScheme.primary else Color.White
-                    )
-                }
-                Box(modifier = Modifier.weight(1f))
-            }
-            Row(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(onClick = {
-                    takePhoto(
-                        context,
-                        imageCaptureUseCase,
-                        cameraExecutor,
-                        mirrorEffectEnabled,
-                        invertVerticalEnabled,
-                        targetUiZoomLevel,
-                        maxZoomHardware,
-                        selectedUiAspectRatio,
-                        onPhotoTaken = { uri -> lastTakenPhotoUri = uri }
-                    )
-                }) { Icon(Icons.Filled.PhotoCamera, "Fotoğraf Çek") }
-                Spacer(Modifier.width(16.dp))
-                Button(onClick = {
-                    if (isRecording) recording?.stop()
-                    else recording = startVideoRecording(context, videoCaptureUseCase, cameraExecutor) { event ->
-                        when (event) {
-                            is VideoRecordEvent.Start -> isRecording = true
-                            is VideoRecordEvent.Finalize -> {
-                                isRecording = false
-                                if (event.hasError()) Log.e(
-                                    "WeirdCam",
-                                    "Video hata: ${event.error} - ${event.cause?.message}"
-                                )
-                                else Log.d(
-                                    "WeirdCam",
-                                    "Video kaydedildi: ${event.outputResults.outputUri}"
-                                )
-                            }
-
-                            else -> {}
-                        }
                     }
-                }) {
-                    Icon(
-                        if (isRecording) Icons.Filled.StopCircle else Icons.Filled.Videocam,
-                        if (isRecording) "Durdur" else "Video"
-                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Zoom: %.1fx".format(animatedUiZoomLevel),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+                Slider(
+                    value = targetUiZoomLevel,
+                    onValueChange = {
+                        targetUiZoomLevel = it.coerceIn(sliderActualMinRange, maxZoomUi)
+                    },
+                    valueRange = sliderActualMinRange..maxZoomUi,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 0.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        lastTakenPhotoUri?.let { uri ->
+                            Image(
+                                painter = rememberAsyncImagePainter(uri),
+                                contentDescription = "Son Çekilen",
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.DarkGray)
+                                    .clickable {
+                                        try {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                                setDataAndType(uri, "image/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            })
+                                        } catch (e: ActivityNotFoundException) {
+                                            Log.e("WeirdCam", "Galeri bulunamadı.", e)
+                                        }
+                                    },
+                                contentScale = ContentScale.Crop
+                            )
+                        } ?: Box(Modifier.size(52.dp))
+                    }
+                    IconButton(onClick = {
+                        userRequestedLensFacing =
+                            if (userRequestedLensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+                    }) {
+                        Icon(Icons.Filled.Cameraswitch, "Kamera Değiştir", tint = Color.White)
+                    }
+                    IconButton(onClick = { mirrorEffectEnabled = !mirrorEffectEnabled }) {
+                        Icon(Icons.Filled.Flip, "Ayna Efekti", tint = if (mirrorEffectEnabled) MaterialTheme.colorScheme.primary else Color.White)
+                    }
+                    IconButton(onClick = { invertVerticalEnabled = !invertVerticalEnabled }) {
+                        Icon(Icons.Filled.Rotate90DegreesCcw, "Dikey Ters Çevir", tint = if (invertVerticalEnabled) MaterialTheme.colorScheme.primary else Color.White)
+                    }
+                    Box(modifier = Modifier.weight(1f))
+                }
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(onClick = {
+                        takePhoto(context, imageCaptureUseCase, cameraExecutor, mirrorEffectEnabled, invertVerticalEnabled, targetUiZoomLevel, maxZoomHardware, selectedUiAspectRatio) { uri -> lastTakenPhotoUri = uri }
+                    }) { Icon(Icons.Filled.PhotoCamera, "Fotoğraf Çek") }
+                    Spacer(Modifier.width(16.dp))
+                    Button(onClick = {
+                        if (isRecording) recording?.stop()
+                        else recording = startVideoRecording(context, videoCaptureUseCase, cameraExecutor) { event ->
+                            when (event) {
+                                is VideoRecordEvent.Start -> isRecording = true
+                                is VideoRecordEvent.Finalize -> {
+                                    isRecording = false
+                                    if (event.hasError()) Log.e("WeirdCam", "Video hata: ${event.error} - ${event.cause?.message}")
+                                    else Log.d("WeirdCam", "Video kaydedildi: ${event.outputResults.outputUri}")
+                                }
+                                else -> {}
+                            }
+                        }
+                    }) {
+                        Icon(if (isRecording) Icons.Filled.StopCircle else Icons.Filled.Videocam, if (isRecording) "Durdur" else "Video")
+                    }
                 }
             }
         }
     }
 
-    DisposableEffect(Unit) { onDispose { cameraExecutor.shutdown() } }
+    // KAYNAK SIZINTISINI ÖNLEYEN BLOK
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraExecutor.shutdown()
+            Log.d("WeirdCam", "CameraExecutor başarıyla kapatıldı.")
+        }
+    }
 }
 
+@Composable
+private fun FocusRing(position: Offset, key: Any) {
+    var isVisible by remember { mutableStateOf(true) }
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isVisible) 1.2f else 1f,
+        animationSpec = tween(durationMillis = 250),
+        label = "focusRingScale"
+    )
+    val animatedAlpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 300, delayMillis = 400),
+        label = "focusRingAlpha"
+    )
+
+    LaunchedEffect(key) {
+        isVisible = true
+        delay(650L)
+        isVisible = false
+    }
+
+    Box(
+        modifier = Modifier
+            .graphicsLayer(
+                scaleX = animatedScale,
+                scaleY = animatedScale,
+                alpha = animatedAlpha
+            )
+            .offset {
+                IntOffset(
+                    (position.x - 40.dp.toPx()).roundToInt(),
+                    (position.y - 40.dp.toPx()).roundToInt()
+                )
+            }
+            .size(80.dp)
+            .border(2.dp, Color.White, CircleShape)
+    )
+}
+
+
 private fun takePhoto(
-    context: Context,
-    imageCapture: ImageCapture,
-    executor: ExecutorService,
-    isMirrored: Boolean,
-    isInvertedVertical: Boolean,
-    currentUiZoomLevel: Float,
-    cameraRealMaxZoom: Float,
-    uiAspectRatio: UiAspectRatio,
-    onPhotoTaken: (Uri?) -> Unit
+    context: Context, imageCapture: ImageCapture, executor: ExecutorService, isMirrored: Boolean, isInvertedVertical: Boolean, currentUiZoomLevel: Float, cameraRealMaxZoom: Float, uiAspectRatio: UiAspectRatio, onPhotoTaken: (Uri?) -> Unit
 ) {
-    val name =
-        SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
     val contentValues = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.jpg")
         put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -532,24 +494,14 @@ private fun takePhoto(
     imageCapture.takePicture(outputOptions, executor, object : ImageCapture.OnImageSavedCallback {
         override fun onError(exc: ImageCaptureException) {
             Log.e("WeirdCam", "Photo capture failed: ${exc.message}", exc)
-            Log.w(
-                "WeirdCam",
-                "onError: IS_PENDING flag for this failed capture might remain if MediaStore entry was created before failure."
-            )
             onPhotoTaken(null)
         }
 
         override fun onImageSaved(output: ImageCapture.OutputFileResults) {
             val savedUri = output.savedUri
             if (savedUri == null) {
-                Log.e("WeirdCam", "Photo saved but URI is null")
-                onPhotoTaken(null)
-                return
+                Log.e("WeirdCam", "Photo saved but URI is null"); onPhotoTaken(null); return
             }
-            Log.d(
-                "WeirdCam",
-                "Photo captured (initial save): $savedUri (AR: ${uiAspectRatio.displayName})"
-            )
             onPhotoTaken(savedUri)
 
             executor.execute {
@@ -563,33 +515,20 @@ private fun takePhoto(
                     if (sourceBitmapFromFile == null) {
                         Log.e("WeirdCam", "Decode bitmap failed: $savedUri"); return@execute
                     }
-
                     var currentBitmap = sourceBitmapFromFile!!
-
                     if (uiAspectRatio == UiAspectRatio.Ratio1x1 && currentBitmap.width != currentBitmap.height) {
-                        Log.d(
-                            "WeirdCam",
-                            "Photo: Applying 1:1 crop. Original: ${currentBitmap.width}x${currentBitmap.height}"
-                        )
                         val side = min(currentBitmap.width, currentBitmap.height)
                         val cropX = (currentBitmap.width - side) / 2
                         val cropY = (currentBitmap.height - side) / 2
-                        val cropped1to1 =
-                            Bitmap.createBitmap(currentBitmap, cropX, cropY, side, side)
+                        val cropped1to1 = Bitmap.createBitmap(currentBitmap, cropX, cropY, side, side)
                         if (currentBitmap != sourceBitmapFromFile) currentBitmap.recycle()
                         currentBitmap = cropped1to1
                         needsResaving = true
                     }
-
-                    val softwareZoomFactor =
-                        if (cameraRealMaxZoom > 0f && currentUiZoomLevel > cameraRealMaxZoom) (currentUiZoomLevel / cameraRealMaxZoom).coerceAtLeast(
-                            1f
-                        ) else 1.0f
+                    val softwareZoomFactor = if (cameraRealMaxZoom > 0f && currentUiZoomLevel > cameraRealMaxZoom) (currentUiZoomLevel / cameraRealMaxZoom).coerceAtLeast(1f) else 1.0f
                     if (softwareZoomFactor > 1.01f) {
-                        Log.d("WeirdCam", "Photo: Applying software zoom: $softwareZoomFactor")
                         val oW = currentBitmap.width; val oH = currentBitmap.height
-                        val nW = (oW / softwareZoomFactor).roundToInt(); val nH =
-                            (oH / softwareZoomFactor).roundToInt()
+                        val nW = (oW / softwareZoomFactor).roundToInt(); val nH = (oH / softwareZoomFactor).roundToInt()
                         if (nW > 0 && nH > 0 && nW <= oW && nH <= oH) {
                             val cX = (oW - nW) / 2; val cY = (oH - nH) / 2
                             val croppedZoom = Bitmap.createBitmap(currentBitmap, cX, cY, nW, nH)
@@ -600,67 +539,32 @@ private fun takePhoto(
                             needsResaving = true
                         }
                     }
-
                     var matrixTransformationNeeded = false
                     val matrix = Matrix().apply {
                         if (isInvertedVertical) {
-                            postRotate(180f, currentBitmap.width / 2f, currentBitmap.height / 2f)
-                            matrixTransformationNeeded = true
-                            Log.i(
-                                "WeirdCam_PREVIEW",
-                                "PhotoMatrix: Applying Invert Vertical (isInvertedVertical=$isInvertedVertical)"
-                            )
+                            postRotate(180f, currentBitmap.width / 2f, currentBitmap.height / 2f); matrixTransformationNeeded = true
                         }
                         if (isMirrored) {
-                            postScale(-1f, 1f, currentBitmap.width / 2f, currentBitmap.height / 2f)
-                            matrixTransformationNeeded = true
-                            Log.i(
-                                "WeirdCam_PREVIEW",
-                                "PhotoMatrix: Applying Mirror (isMirrored=$isMirrored)"
-                            )
+                            postScale(-1f, 1f, currentBitmap.width / 2f, currentBitmap.height / 2f); matrixTransformationNeeded = true
                         }
                     }
-
                     if (matrixTransformationNeeded) {
-                        Log.d("WeirdCam", "Applying matrix transformations to photo bitmap.")
-                        val matrixTransformed = Bitmap.createBitmap(
-                            currentBitmap,
-                            0,
-                            0,
-                            currentBitmap.width,
-                            currentBitmap.height,
-                            matrix,
-                            true
-                        )
+                        val matrixTransformed = Bitmap.createBitmap(currentBitmap, 0, 0, currentBitmap.width, currentBitmap.height, matrix, true)
                         if (currentBitmap != sourceBitmapFromFile) currentBitmap.recycle()
                         currentBitmap = matrixTransformed
                         needsResaving = true
                     }
-
                     finalBitmapToProcess = currentBitmap
-
                     if (needsResaving) {
-                        Log.d("WeirdCam", "Resaving processed bitmap to $savedUri")
                         context.contentResolver.openOutputStream(savedUri, "w")?.use { outStream ->
-                            finalBitmapToProcess!!.compress(
-                                Bitmap.CompressFormat.JPEG,
-                                95,
-                                outStream
-                            )
-                        } ?: Log.e(
-                            "WeirdCam",
-                            "Failed to open output stream for resaving processed photo."
-                        )
-                    } else {
-                        Log.d("WeirdCam", "No transformations applied to photo requiring resave.")
+                            finalBitmapToProcess!!.compress(Bitmap.CompressFormat.JPEG, 95, outStream)
+                        }
                     }
-
                 } catch (e: Exception) {
                     Log.e("WeirdCam", "Error processing photo: ${e.message}", e)
                 } finally {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val finalContentValues =
-                            ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                        val finalContentValues = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
                         try {
                             context.contentResolver.update(savedUri, finalContentValues, null, null)
                         } catch (e: Exception) {
@@ -671,7 +575,6 @@ private fun takePhoto(
                         finalBitmapToProcess.recycle()
                     }
                     sourceBitmapFromFile?.recycle()
-                    Log.d("WeirdCam", "Photo processing and cleanup finished for $savedUri.")
                 }
             }
         }
@@ -679,13 +582,9 @@ private fun takePhoto(
 }
 
 private fun startVideoRecording(
-    context: Context,
-    videoCapture: VideoCapture<Recorder>,
-    executor: ExecutorService,
-    onRecordEvent: (VideoRecordEvent) -> Unit
+    context: Context, videoCapture: VideoCapture<Recorder>, executor: ExecutorService, onRecordEvent: (VideoRecordEvent) -> Unit
 ): Recording? {
-    val name =
-        SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
     val contentValuesForVideo = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.mp4")
         put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
@@ -697,18 +596,12 @@ private fun startVideoRecording(
         }
     }
     val mediaStoreOutputOptions = MediaStoreOutputOptions.Builder(
-        context.contentResolver,
-        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-    )
-        .setContentValues(contentValuesForVideo)
-        .build()
+        context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+    ).setContentValues(contentValuesForVideo).build()
 
     var pendingRecording: Recording? = null
     try {
-        val audioEnabled = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
+        val audioEnabled = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val activeRecording = videoCapture.output.prepareRecording(context, mediaStoreOutputOptions)
         if (audioEnabled) activeRecording.withAudioEnabled()
         pendingRecording = activeRecording.start(executor, onRecordEvent)

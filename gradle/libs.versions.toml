@@ -1,16 +1,26 @@
 [versions]
+# ÖNEMLİ NOT: Projenizin sorunsuz derlenmesi için bilinen stabil bir versiyonda bırakıldı.
 androidGradlePlugin = "8.10.1"
-kotlin = "2.0.20"
-compose = "1.7.0"
-composeBom = "2024.10.00"
-androidxCore = "1.13.1"
-androidxLifecycle = "2.8.4"
-androidxActivity = "1.9.2"
-androidxMaterial3 = "1.3.0"
+# GÜNCELLEME: Kotlin versiyonu en son sürüme yükseltildi.
+kotlin = "2.0.21"
+# GÜNCELLEME: Compose Bill of Materials (BOM) en son sürüme yükseltildi.
+composeBom = "2025.06.00"
+# GÜNCELLEME: AndroidX kütüphaneleri en son sürümlerine yükseltildi.
+androidxCore = "1.16.0"
+androidxLifecycle = "2.9.1"
+androidxActivity = "1.10.1"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
 espresso = "3.6.1"
-cameraX = "1.3.2"
+# GÜNCELLEME: CameraX kütüphaneleri en son sürüme yükseltildi.
+cameraX = "1.4.2"
+# GÜNCELLEME: camera-video versiyonu cameraX ile aynı olacak şekilde birleştirildi.
+# Not: Eğer farklı bir versiyon gerekiyorsa ayrı tutulabilir, şimdilik birleştirmek daha temiz.
+cameraVideo = "1.4.2"
+composeIcons = "1.7.8"
+coil = "2.7.0"
+
+# KALDIRILDI: 'compose' ve 'androidxMaterial3' versiyonları kullanılmadığı için silindi.
 
 [libraries]
 androidx-core = { module = "androidx.core:core", version.ref = "androidxCore" }
@@ -18,7 +28,7 @@ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidxLifecycle" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
-androidx-ui = { module = "androidx.compose.ui:ui" } # BOM tarafından yönetiliyor
+androidx-ui = { module = "androidx.compose.ui:ui" }
 androidx-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
 androidx-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 androidx-material3 = { module = "androidx.compose.material3:material3" }
@@ -32,6 +42,11 @@ androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "cameraX" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraX" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraX" }
+androidx-camera-video = { group = "androidx.camera", name = "camera-video", version.ref = "cameraVideo" }
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core", version.ref = "composeIcons" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "composeIcons" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
