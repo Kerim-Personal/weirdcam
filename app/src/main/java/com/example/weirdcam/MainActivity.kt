@@ -20,9 +20,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.weirdcam.ui.theme.WeirdcamTheme
+import com.google.accompanist.systemuicontroller.rememberSystemUiController
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +50,16 @@ class MainActivity : ComponentActivity() {
         updatePermissionStatus()
 
         setContent {
+            // Sistem UI Kontrolcüsü kurulumu
+            val systemUiController = rememberSystemUiController()
+            LaunchedEffect(systemUiController) {
+                systemUiController.setSystemBarsColor(
+                    color = Color.Transparent,
+                    darkIcons = false
+                )
+            }
+
+
             if (!hasCameraPermission || !hasAudioPermission) {
                 LaunchedEffect(Unit) {
                     val permissionsToRequest = mutableListOf<String>()
@@ -90,7 +102,6 @@ fun AppContent(
     WeirdcamTheme {
         Scaffold(modifier = modifier.fillMaxSize()) { innerPadding ->
             if (hasCameraPermission && hasAudioPermission) {
-                // Burada CameraWithControls çağrısı en basit haliyle duruyor
                 CameraWithControls(
                     modifier = Modifier
                         .padding(innerPadding)
